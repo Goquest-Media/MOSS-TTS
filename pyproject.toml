@@ -29,6 +29,7 @@ dependencies = [
   "ninja",
   "setuptools",
   "wheel",
+  "gradio"
 ]
 
 [project.optional-dependencies]
