@@ -47,7 +47,6 @@ MOSS‑SoundEffect focuses on **contextual audio completion** beyond speech, ena
 
 
 ```python
-import os
 from pathlib import Path
 import torch
 import torchaudio
@@ -89,7 +88,6 @@ model.eval()
 
 batch_size = 1
 
-messages = []
 save_dir = Path("inference_root")
 save_dir.mkdir(exist_ok=True, parents=True)
 sample_idx = 0

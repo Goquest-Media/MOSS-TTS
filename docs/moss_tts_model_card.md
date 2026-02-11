@@ -87,7 +87,6 @@ MOSS-TTS provides a convenient `generate` interface for rapid usage. The example
 3. Duration control
 
 ```python
-import os
 from pathlib import Path
 import torch
 import torchaudio
@@ -148,7 +147,6 @@ model.eval()
 
 batch_size = 1
 
-messages = []
 save_dir = Path("inference_root")
 save_dir.mkdir(exist_ok=True, parents=True)
 sample_idx = 0
@@ -178,7 +176,6 @@ with torch.no_grad():
 MOSS-TTS supports continuation-based cloning: provide a prefix audio clip in the assistant message, and make sure the **prefix transcript** is included in the text. The model continues in the same speaker identity and style.
 
 ```python
-import os
 from pathlib import Path
 import torch
 import torchaudio
@@ -232,7 +229,6 @@ model.eval()
 
 batch_size = 1
 
-messages = []
 save_dir = Path("inference_root")
 save_dir.mkdir(exist_ok=True, parents=True)
 sample_idx = 0

@@ -50,29 +50,32 @@ For full architecture details, see **`moss_tts_delay/README.md`**.
 MOSS-TTSD uses a **continuation** workflow: provide reference audio for each speaker, their transcripts as a prefix, and the dialogue text to generate. The model continues in each speaker's identity.
 
 ```python
-import os
 from pathlib import Path
 import torch
 import torchaudio
 from transformers import AutoModel, AutoProcessor
+# Disable the broken cuDNN SDPA backend
+torch.backends.cuda.enable_cudnn_sdp(False)
+# Keep these enabled as fallbacks
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_mem_efficient_sdp(True)
+torch.backends.cuda.enable_math_sdp(True)
 
 pretrained_model_name_or_path = "OpenMOSS-Team/MOSS-TTSD-v1.0"
-audio_tokenizer_name_or_path = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
 processor = AutoProcessor.from_pretrained(
     pretrained_model_name_or_path,
     trust_remote_code=True,
-    codec_path=audio_tokenizer_name_or_path,
 )
 processor.audio_tokenizer = processor.audio_tokenizer.to(device)
-processor.audio_tokenizer.eval()
 
 model = AutoModel.from_pretrained(
     pretrained_model_name_or_path,
     trust_remote_code=True,
-    attn_implementation="flash_attention_2",
+    # If FlashAttention 2 is installed, you can set attn_implementation="flash_attention_2"
+    attn_implementation="sdpa",
     torch_dtype=dtype,
 ).to(device)
 model.eval()
@@ -125,7 +128,7 @@ conversations = [
 
 batch_size = 1
 
-save_dir = Path("output")
+save_dir = Path("inference_root")
 save_dir.mkdir(exist_ok=True, parents=True)
 sample_idx = 0
 with torch.no_grad():
