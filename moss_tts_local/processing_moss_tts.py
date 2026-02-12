@@ -88,7 +88,7 @@ class UserMessage(Message):
             reference = []
             for speaker_idx, speaker_reference in enumerate(self.reference):
                 if speaker_reference is not None:
-                    reference.append(f"[S{speaker_idx}]:\n{AUDIO_PLACEHOLDER}")
+                    reference.append(f"[S{speaker_idx+1}]:\n{AUDIO_PLACEHOLDER}")
             reference = "\n".join(reference)
             audio_codes_list = [
                 speaker_reference
@@ -196,8 +196,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
         kwargs.pop("_from_auto", None)
 
         audio_tokenizer_name_or_path = kwargs.pop(
-            # "codec_path", "OpenMOSS-Team/MOSS-Audio-Tokenizer"
-            "codec_path", "/inspire/sj-ssd3/project/embodied-multimodality/public/ytgong/MOSS-TTS/MOSS-Audio-Tokenizer-snapshot"
+            "codec_path", "OpenMOSS-Team/MOSS-Audio-Tokenizer"
         )
 
         pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
@@ -334,7 +333,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
                         )
 
                     if len(paths) > 0:
-                        encoded_from_paths = self.encode_audios_from_path(paths, n_vq) # List
+                        encoded_from_paths = self.encode_audios_from_path(paths, n_vq)
                         if len(encoded_from_paths) != len(paths):
                             raise RuntimeError(
                                 "encode_audios_from_path returned an unexpected number of items."
@@ -463,7 +462,6 @@ class MossTTSDelayProcessor(ProcessorMixin):
             if length == 0:
                 return f"{audio_start_token}{audio_end_token}"
 
-            # step_tokens = gen_slot_token * length + (delay_slot_token * (n_vq - 1))
             step_tokens = gen_slot_token * length
             return f"{audio_start_token}{step_tokens}{audio_end_token}"
 
@@ -555,6 +553,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
         """
         if role == "user":
             audio_gen_slot_token = audio_delay_slot_token = self.audio_user_slot_token
+            truncation = False
         else:
             audio_gen_slot_token = self.audio_assistant_gen_slot_token
             audio_delay_slot_token = self.audio_assistant_delay_slot_token
@@ -611,9 +610,6 @@ class MossTTSDelayProcessor(ProcessorMixin):
             ):
                 audio_start_idx = int(audio_start_idx_t.item())
                 audio_end_idx = int(audio_end_idx_t.item())
-                # delay_audio_codes = self.apply_delay_pattern(
-                #     audio_codes, self.model_config.audio_pad_code
-                # )
                 delay_audio_codes = audio_codes # not delay 
                 pad_codes = torch.full(
                     (audio_start_idx - prefix_idx + 1, n_vq),
@@ -625,10 +621,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
                 prefix_idx = audio_end_idx
 
             if truncation:
-                # delay_audio_codes_list[-1] = delay_audio_codes_list[-1][
-                #     : -(n_vq - 1), :
-                # ]
-                ...
+                raise RuntimeError("Truncation generation is not supported at present")
             else:
                 last_audio_end_idx = int(audio_end_indices[-1].item())
                 pad_codes = torch.full(
@@ -676,8 +669,6 @@ class MossTTSDelayProcessor(ProcessorMixin):
 
     def _parse_audio_codes(self, start_length, audio_codes):
         # De-delay back to [T', n_vq]
-        # audio_codes = self.apply_de_delay_pattern(audio_codes)
-
         # Rows that are all pad are separators between real audio segments.
         is_pad = (audio_codes == self.model_config.audio_pad_code).all(dim=1)
         non_pad = ~is_pad
@@ -689,8 +680,6 @@ class MossTTSDelayProcessor(ProcessorMixin):
         if breaks.numel() == 0:
             segments_idx = [idx]
         else:
-            # assert len(breaks) == 1
-            # segments_idx = torch.split(idx, [breaks.tolist()[0], len(idx) - breaks.tolist()[0]])
             segments_idx = torch.split(idx, breaks.tolist())
 
         audio_codes_list = [audio_codes[s] for s in segments_idx]
@@ -907,30 +896,25 @@ class MossTTSDelayProcessor(ProcessorMixin):
             codes.transpose(0, 1).contiguous().to(device=device, dtype=torch.long)
             for codes in audio_tokens_list
         ]
-
-        if hasattr(audio_tokenizer, "batch_decode"):
-            dec = audio_tokenizer.batch_decode(codes_list)
-            audio = dec.audio  # (B, C, T)
-            audio_lengths = dec.audio_lengths  # (B,)
-        else:
-            # Fallback: pad to (NQ, B, T) + mask, then decode.
-            nq = int(codes_list[0].shape[0])
-            max_t = max(int(c.shape[1]) for c in codes_list)
-            audio_codes = torch.zeros(
-                nq, len(codes_list), max_t, device=device, dtype=torch.long
-            )
-            padding_mask = torch.zeros(
-                len(codes_list), max_t, device=device, dtype=torch.bool
-            )
-            for i, c in enumerate(codes_list):
-                t = int(c.shape[1])
-                audio_codes[:, i, :t] = c
-                padding_mask[i, :t] = True
-            dec = audio_tokenizer.decode(
-                audio_codes, padding_mask=padding_mask, return_dict=True
-            )
-            audio = dec.audio
-            audio_lengths = dec.audio_lengths
+    
+        # Fallback: pad to (NQ, B, T) + mask, then decode.
+        nq = int(codes_list[0].shape[0])
+        max_t = max(int(c.shape[1]) for c in codes_list)
+        audio_codes = torch.zeros(
+            nq, len(codes_list), max_t, device=device, dtype=torch.long
+        )
+        padding_mask = torch.zeros(
+            len(codes_list), max_t, device=device, dtype=torch.bool
+        )
+        for i, c in enumerate(codes_list):
+            t = int(c.shape[1])
+            audio_codes[:, i, :t] = c
+            padding_mask[i, :t] = True
+        dec = audio_tokenizer.decode(
+            audio_codes, padding_mask=padding_mask, return_dict=True, chunk_duration=8
+        )
+        audio = dec.audio
+        audio_lengths = dec.audio_lengths
 
         if audio is None or audio_lengths is None:
             raise RuntimeError(

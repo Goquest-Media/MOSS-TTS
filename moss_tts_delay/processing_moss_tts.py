@@ -37,7 +37,6 @@ from transformers import (
 
 from .configuration_moss_tts import MossTTSDelayConfig
 
-from ..audio_tokenzier.modeling_moss_audio_tokenizer import MossAudioTokenizerModel
 
 logger = logging.get_logger(__name__)
 
@@ -89,7 +88,7 @@ class UserMessage(Message):
             reference = []
             for speaker_idx, speaker_reference in enumerate(self.reference):
                 if speaker_reference is not None:
-                    reference.append(f"[S{speaker_idx}]:\n{AUDIO_PLACEHOLDER}")
+                    reference.append(f"[S{speaker_idx+1}]:\n{AUDIO_PLACEHOLDER}")
             reference = "\n".join(reference)
             audio_codes_list = [
                 speaker_reference
@@ -216,7 +215,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
             trust_remote_code=trust_remote_code,
             **kwargs,
         )
-        audio_tokenizer = MossAudioTokenizerModel.from_pretrained(
+        audio_tokenizer = AutoModel.from_pretrained(
             audio_tokenizer_name_or_path,
             trust_remote_code=trust_remote_code,
             **kwargs,
@@ -549,6 +548,7 @@ class MossTTSDelayProcessor(ProcessorMixin):
         """
         if role == "user":
             audio_gen_slot_token = audio_delay_slot_token = self.audio_user_slot_token
+            truncation = False
         else:
             audio_gen_slot_token = self.audio_assistant_gen_slot_token
             audio_delay_slot_token = self.audio_assistant_delay_slot_token
@@ -896,30 +896,25 @@ class MossTTSDelayProcessor(ProcessorMixin):
             codes.transpose(0, 1).contiguous().to(device=device, dtype=torch.long)
             for codes in audio_tokens_list
         ]
-
-        if hasattr(audio_tokenizer, "batch_decode"):
-            dec = audio_tokenizer.batch_decode(codes_list)
-            audio = dec.audio  # (B, C, T)
-            audio_lengths = dec.audio_lengths  # (B,)
-        else:
-            # Fallback: pad to (NQ, B, T) + mask, then decode.
-            nq = int(codes_list[0].shape[0])
-            max_t = max(int(c.shape[1]) for c in codes_list)
-            audio_codes = torch.zeros(
-                nq, len(codes_list), max_t, device=device, dtype=torch.long
-            )
-            padding_mask = torch.zeros(
-                len(codes_list), max_t, device=device, dtype=torch.bool
-            )
-            for i, c in enumerate(codes_list):
-                t = int(c.shape[1])
-                audio_codes[:, i, :t] = c
-                padding_mask[i, :t] = True
-            dec = audio_tokenizer.decode(
-                audio_codes, padding_mask=padding_mask, return_dict=True
-            )
-            audio = dec.audio
-            audio_lengths = dec.audio_lengths
+    
+        # Fallback: pad to (NQ, B, T) + mask, then decode.
+        nq = int(codes_list[0].shape[0])
+        max_t = max(int(c.shape[1]) for c in codes_list)
+        audio_codes = torch.zeros(
+            nq, len(codes_list), max_t, device=device, dtype=torch.long
+        )
+        padding_mask = torch.zeros(
+            len(codes_list), max_t, device=device, dtype=torch.bool
+        )
+        for i, c in enumerate(codes_list):
+            t = int(c.shape[1])
+            audio_codes[:, i, :t] = c
+            padding_mask[i, :t] = True
+        dec = audio_tokenizer.decode(
+            audio_codes, padding_mask=padding_mask, return_dict=True, chunk_duration=8
+        )
+        audio = dec.audio
+        audio_lengths = dec.audio_lengths
 
         if audio is None or audio_lengths is None:
             raise RuntimeError(

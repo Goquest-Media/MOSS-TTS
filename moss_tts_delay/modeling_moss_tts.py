@@ -398,9 +398,9 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
         text_temperature: float = 1.5,
         text_top_p: float = 1.0,
         text_top_k: int = 50,
-        audio_temperature: float = 1.5,
+        audio_temperature: float = 1.7,
         audio_top_p: float = 0.8,
-        audio_top_k: int = 50,
+        audio_top_k: int = 25,
         audio_repetition_penalty: float = 1.0,
     ):
         if text_temperature > 0:
@@ -424,14 +424,10 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
         generation_ids = input_ids[:]
         is_stopping = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
-        # 三个阶段: 1. 非 audio; 2. audio not delay; 3. audio delay
-        audio_lengths = torch.zeros(batch_size, dtype=torch.int64, device=device) # 0 的时候表示阶段1;
+        audio_lengths = torch.zeros(batch_size, dtype=torch.int64, device=device)
         torch_int64_max = torch.iinfo(torch.int64).max
-        delayed_lengths = torch.full((batch_size,), torch_int64_max, dtype=torch.int64, device=device) # 最大值的时候表示阶段2;
+        delayed_lengths = torch.full((batch_size,), torch_int64_max, dtype=torch.int64, device=device)
         
-        # 考虑 continuation 时 audio_start 已经在 input_ids 中的情况;
-        # NOTE 注意我们目前不考虑任何输入已经开始 delay 的情况;
-        # 需要同时考虑 continuation 和直接生成的情况;
         is_continuation = (input_ids[:, -1, 0] == self.config.audio_start_token_id) | (input_ids[:, -1, 0] == self.config.audio_assistant_gen_slot_token_id)
         audio_start_indices = find_last_equal_C(input_ids[..., 0], self.config.audio_start_token_id)
         audio_start_mask = is_continuation & (audio_start_indices != -1)
@@ -443,8 +439,6 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
         pre_exclude_mask1 = torch.ones(self.config.language_config.vocab_size, device=device).bool()
         pre_exclude_mask1[[self.config.audio_assistant_gen_slot_token_id, self.config.audio_assistant_delay_slot_token_id]] = False
         
-        
-        # 注意 time_step 未必表示对于实际对话时，当前输出token的位置，因为有续写的情况;
         for time_step in tqdm(range(max_new_tokens), desc=f"Generating bs{batch_size} ..."):
             outputs = self(
                 input_ids=current_input_ids,
@@ -456,9 +450,7 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
             
             next_token_logits = [logit[:, -1, :] / text_temperature if logit_idx == 0 else logit[:, -1, :] / audio_temperature for logit_idx, logit in enumerate(outputs.logits)] # List, len=n_vq+1, [batch_size, 1, vocab_size]; 
             next_token_logits[0] = next_token_logits[0].clone()
-            # 1. 先处理 text token;
             next_text_token = torch.full((batch_size,), self.config.pad_token_id, device=device)
-            # 第二个 audio_assistant_delay_slot_token_id 和 audio_end 是不需要采样的，audio_start, 每一个 audio_assistant_gen_slot_token_ids 和第一个 audio_assistant_delay_slot_token_id 是需要采样的;
             next_text_token[~is_stopping & (delayed_lengths < n_vq)] = self.config.audio_assistant_delay_slot_token_id
             is_audio_eos = ~is_stopping & (delayed_lengths == n_vq)
             next_text_token[is_audio_eos] = self.config.audio_end_token_id
@@ -471,7 +463,6 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
             if time_step <= n_vq:
                 next_token_logits[0][..., self.config.im_end_token_id] = float('-inf')
                 
-            # 文本层不使用重复惩罚;
             next_text_token[sampling_text_mask] = sample_token(
                 logits=next_token_logits[0][sampling_text_mask],
                 top_p=text_top_p,
@@ -479,15 +470,10 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
                 do_sample=text_do_sample
             )
             is_audio[next_text_token == self.config.audio_start_token_id] = True
-            # 只存在一种停止逻辑，即 next_text_token = <|im_end|>;
             is_stopping[next_text_token == self.config.im_end_token_id] = True
 
-            # 2. 再处理 audio tokens;
-            # audio_start 和 audio_end 之外的内容直接pad，默认是 pad，我们只需要填充有值的部分即可;
             next_audio_tokens = torch.full((batch_size, n_vq), self.config.audio_pad_code, device=device)
             
-            # 需要考虑的是与 audio_start 的距离;
-            # 先查看是否是pad的情况; true 表示有值;
             pre_audio_mask = audio_lengths.unsqueeze(1) > torch.arange(n_vq, dtype=int, device=device).expand(batch_size, n_vq)
             post_audio_mask = torch.arange(n_vq, dtype=int, device=device).expand(batch_size, n_vq) > delayed_lengths.unsqueeze(1) - 1
             post_audio_mask[delayed_lengths == torch_int64_max] = True
@@ -495,29 +481,36 @@ class MossTTSDelayModel(MossTTSDelayPreTrainedModel):
             next_audio_tokens[~sampling_audio_mask] = self.config.audio_pad_code
             
             if sampling_audio_mask.sum() > 0:
-                audio_logits = torch.stack(next_token_logits[1:], dim=1)[sampling_audio_mask] # torch.stack -> [batch_size, n_vq - 1, vocab_size]
+                audio_ch0_logits = next_token_logits[1][sampling_audio_mask[:, 0]]
+                audio_logits = torch.stack(next_token_logits[2:], dim=1)[sampling_audio_mask[:, 1:]]
+                audio_ch0_logits[..., self.config.audio_pad_code] = float('-inf')
                 audio_logits[..., self.config.audio_pad_code] = float('-inf')
-                next_audio_tokens[sampling_audio_mask] = sample_token(
+                next_audio_tokens[:, 0][sampling_audio_mask[:, 0]] = sample_token(
+                    logits=audio_ch0_logits,
+                    prev_tokens=generation_ids[:, :, 1],
+                    repetition_penalty=audio_repetition_penalty,
+                    top_p=audio_top_p, 
+                    top_k=audio_top_k, 
+                    do_sample=audio_do_sample
+                )
+                next_audio_tokens[:, 1:][sampling_audio_mask[:, 1:]] = sample_token(
                     logits=audio_logits,
-                    prev_tokens=generation_ids[:, :, 1:],
+                    prev_tokens=generation_ids[:, :, 2:],
                     repetition_penalty=audio_repetition_penalty,
                     top_p=audio_top_p, 
                     top_k=audio_top_k, 
                     do_sample=audio_do_sample
                 )
                 
-            # 这里显示的是下一个时间步时可以直接使用的 audio_lengths 和 delayed_lengths 的状态;
-            # audio_lengths[(next_text_token == self.audio_start_token_id) & (audio_lengths > 0)] += 1
-            # audio_lengths[(next_text_token == self.audio_start_token_id) | (next_text_token == self.audio_assistant_gen_slot_token_id)] += 1
             audio_lengths[(next_text_token == self.config.audio_start_token_id) | (next_text_token == self.config.audio_assistant_gen_slot_token_id) | (next_text_token == self.config.audio_assistant_delay_slot_token_id)] += 1
             audio_lengths[next_text_token == self.config.audio_end_token_id] = 0
             delayed_lengths[(delayed_lengths == torch_int64_max) & (next_text_token == self.config.audio_assistant_delay_slot_token_id)] = 0
             delayed_lengths[delayed_lengths != torch_int64_max] += 1
             delayed_lengths[delayed_lengths > n_vq] = torch_int64_max
             
-            current_input_ids = torch.cat([next_text_token[:, None, None], next_audio_tokens[:, None, :]], dim=2) # [batch_size, 1, n_vq + 1]
+            current_input_ids = torch.cat([next_text_token[:, None, None], next_audio_tokens[:, None, :]], dim=2)
             current_attention_mask = torch.cat([current_attention_mask, (~is_stopping).unsqueeze(-1)], dim=-1)
-            generation_ids = torch.cat([generation_ids, current_input_ids], dim=1) # [batch_size, seq_len, n_vq + 1]
+            generation_ids = torch.cat([generation_ids, current_input_ids], dim=1)
             
             if is_stopping.sum() == batch_size:
                 break
