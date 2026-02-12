@@ -137,16 +137,17 @@ Notes:
 - FlashAttention 2 is only available on supported GPUs and is typically used with `torch.float16` or `torch.bfloat16`.
 
 
+<a id="moss-tts-basic-usage"></a>
 ### MOSS‑TTS Basic Usage
 
 If you prefer Gradio demos, we provide 4 scripts for the main models:
 
 | Model | Script | Run |
 |---|---|---|
-| MOSS-TTS | [clis/moss_tts_demo.py](moss_tts_demo.py) | `python clis/moss_tts_demo.py` |
-| MOSS-TTSD | [clis/moss_ttsd_demo.py](moss_ttsd_demo.py) | `python clis/moss_ttsd_demo.py` |
-| MOSS-VoiceGenerator | [clis/moss_voice_generator_demo.py](moss_voice_generator_demo.py) | `python clis/moss_voice_generator_demo.py` |
-| MOSS-SoundEffect | [clis/moss_sound_effect_demo.py](moss_sound_effect_demo.py) | `python clis/moss_sound_effect_demo.py` |
+| MOSS-TTS | [clis/moss_tts_app.py](clis/moss_tts_app.py) |
+| MOSS-TTSD | [clis/moss_ttsd_app.py](clis/moss_ttsd_app.py) | 
+| MOSS-VoiceGenerator | [clis/moss_voice_generator_app.py](clis/moss_voice_generator_app.py) |
+| MOSS-SoundEffect | [clis/moss_sound_effect_app.py](clis/moss_sound_effect_app.py) | 
 
 For the MOSS-TTS-Realtime Gradio demo, please refer to [docs/moss_tts_realtime_model_card.md](docs/moss_tts_realtime_model_card.md).
 

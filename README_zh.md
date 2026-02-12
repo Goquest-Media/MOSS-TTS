@@ -48,6 +48,7 @@ MOSS‑TTS 家族是由 [MOSI.AI](https://mosi.cn/#hero) 与 [OpenMOSS 团队](h
 - [已发布模型](#released-models)
 - [快速开始](#quickstart)
   - [环境准备](#environment-setup)
+  - [（可选）安装 FlashAttention 2](#optional-install-flashattention-2)
   - [基础用法](#moss-tts-basic-usage)
 - [评测](#evaluation)
   - [MOSS-TTS 评测](#eval-moss-tts)
@@ -122,7 +123,7 @@ git clone https://github.com/OpenMOSS/MOSS-TTS.git
 cd MOSS-TTS
 pip install --extra-index-url https://download.pytorch.org/whl/cu128 -e .
 ```
-
+<a id="optional-install-flashattention-2"></a>
 #### （可选）安装 FlashAttention 2
 
 如果你的硬件支持，可以安装 FlashAttention 2 以提升速度并降低显存占用。
@@ -148,12 +149,12 @@ MAX_JOBS=4 pip install --extra-index-url https://download.pytorch.org/whl/cu128 
 
 如果你更希望使用 Gradio 界面，我们为 4 个主模型提供了对应脚本：
 
-| Model | Script | Run |
-|---|---|---|
-| MOSS-TTS | [clis/moss_tts_demo.py](moss_tts_demo.py) | `python clis/moss_tts_demo.py` |
-| MOSS-TTSD | [clis/moss_ttsd_demo.py](moss_ttsd_demo.py) | `python clis/moss_ttsd_demo.py` |
-| MOSS-VoiceGenerator | [clis/moss_voice_generator_demo.py](moss_voice_generator_demo.py) | `python clis/moss_voice_generator_demo.py` |
-| MOSS-SoundEffect | [clis/moss_sound_effect_demo.py](moss_sound_effect_demo.py) | `python clis/moss_sound_effect_demo.py` |
+| Model | Script | 
+|---|---|
+| MOSS-TTS | [clis/moss_tts_app.py](clis/moss_tts_app.py) |
+| MOSS-TTSD | [clis/moss_ttsd_app.py](clis/moss_ttsd_app.py) | 
+| MOSS-VoiceGenerator | [clis/moss_voice_generator_app.py](clis/moss_voice_generator_app.py) | 
+| MOSS-SoundEffect | [clis/moss_sound_effect_app.py](clis/moss_sound_effect_app.py) |
 
 MOSS-TTS-Realtime 的 Gradio demo 请直接参考 [docs/moss_tts_realtime_model_card.md](docs/moss_tts_realtime_model_card.md)。
 
