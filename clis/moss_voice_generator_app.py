@@ -1,6 +1,9 @@
 import argparse
 import functools
 import importlib.util
+import json
+from pathlib import Path
+import re
 import time
 
 import gradio as gr
@@ -18,6 +21,56 @@ torch.backends.cuda.enable_math_sdp(True)
 MODEL_PATH = "OpenMOSS-Team/MOSS-VoiceGenerator"
 DEFAULT_ATTN_IMPLEMENTATION = "auto"
 DEFAULT_MAX_NEW_TOKENS = 4096
+EXAMPLE_TEXTS_JSONL_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "text" / "moss_voice_generator_example_texts.jsonl"
+)
+
+
+def _parse_example_id(example_id: str) -> tuple[str, int] | None:
+    matched = re.fullmatch(r"(zh|en)/(\d+)", (example_id or "").strip())
+    if matched is None:
+        return None
+    return matched.group(1), int(matched.group(2))
+
+
+def build_example_rows() -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, int, str, str]] = []
+    with open(EXAMPLE_TEXTS_JSONL_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            sample = json.loads(line)
+            parsed = _parse_example_id(sample.get("id", ""))
+            if parsed is None:
+                continue
+
+            language, index = parsed
+            instruction = str(sample.get("instruction", "")).strip()
+            text = str(sample.get("text", "")).strip()
+            rows.append((language, index, instruction, text))
+
+    language_order = {"zh": 0, "en": 1}
+    rows.sort(key=lambda item: (language_order.get(item[0], 99), item[1]))
+    return [(f"{language}/{index}", instruction, text) for language, index, instruction, text in rows]
+
+
+EXAMPLE_ROWS = build_example_rows()
+
+
+def apply_example_selection(evt: gr.SelectData):
+    if evt is None or evt.index is None:
+        return gr.update(), gr.update()
+
+    if isinstance(evt.index, (tuple, list)):
+        row_idx = int(evt.index[0])
+    else:
+        row_idx = int(evt.index)
+
+    if row_idx < 0 or row_idx >= len(EXAMPLE_ROWS):
+        return gr.update(), gr.update()
+
+    _, instruction_value, text_value = EXAMPLE_ROWS[row_idx]
+    return instruction_value, text_value
 
 
 def resolve_attn_implementation(requested: str, device: torch.device, dtype: torch.dtype) -> str | None:
@@ -267,6 +320,22 @@ def build_demo(args: argparse.Namespace):
             with gr.Column(scale=2):
                 output_audio = gr.Audio(label="Output Audio", type="numpy", elem_id="output_audio")
                 status = gr.Textbox(label="Status", lines=4, interactive=False)
+                examples_table = gr.Dataframe(
+                    headers=["Voice Instruction", "Example Text"],
+                    value=[[example_instruction, example_text] for _, example_instruction, example_text in EXAMPLE_ROWS],
+                    datatype=["str", "str"],
+                    row_count=(len(EXAMPLE_ROWS), "fixed"),
+                    col_count=(2, "fixed"),
+                    interactive=False,
+                    wrap=True,
+                    label="Examples (click a row to fill inputs)",
+                )
+
+        examples_table.select(
+            fn=apply_example_selection,
+            inputs=[],
+            outputs=[instruction, text],
+        )
 
         run_btn.click(
             fn=lambda text, instruction, temperature, top_p, top_k, repetition_penalty, max_new_tokens: run_inference(
