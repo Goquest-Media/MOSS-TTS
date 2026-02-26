@@ -172,3 +172,33 @@ Promote `C2` if:
 3. Failure taxonomy with examples.
 4. Final production preset and fallback policy.
 
+## 13. One-Command Ablation Runner
+
+This repo also includes:
+
+- `scripts/run_dubbing_ablation.py`
+
+It runs `C0/C1/C2/C3`, supports multiple seeds, and writes:
+
+1. `results.jsonl` (all line-level outputs and metadata)
+2. `summary_by_run.csv` (condition+seed aggregates)
+3. `summary_by_condition.csv` (condition aggregates)
+4. `summary.md` (human-readable table)
+
+Example:
+
+```bash
+python3 scripts/run_dubbing_ablation.py \
+  --manifest /abs/path/character_lines.jsonl \
+  --anchor-audio /abs/path/character_anchor.wav \
+  --out-dir /abs/path/outputs/ablation_run_01 \
+  --conditions C0,C1,C2,C3 \
+  --seeds 42,1337,2026 \
+  --candidate-count 3 \
+  --audio-temperature 1.2 \
+  --audio-top-p 0.7 \
+  --audio-top-k 20 \
+  --audio-repetition-penalty 1.0 \
+  --cap-ratio 1.35 \
+  --include-tokens-in-generation
+```
