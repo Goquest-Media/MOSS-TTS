@@ -16,10 +16,12 @@ Use two conditioning channels in one continuation call:
 1. Identity anchor (fixed character clip) via `reference=[anchor_codes]`.
 2. Per-line expressive context via `AssistantMessage(audio_codes_list=[line_turkish_audio])`.
 
-Text is formatted as:
+Text is formatted as (join style is a controlled variable):
 
 ```text
-<turkish_transcript_of_prefix_audio> <english_dub_line>
+space: <turkish_transcript_of_prefix_audio> <english_dub_line>
+newline: <turkish_transcript_of_prefix_audio>\n<english_dub_line>
+lang_tags: [TR]...[/TR] [EN]...[/EN]
 ```
 
 This should keep a stable base voice while retaining local emotional cadence.
@@ -35,10 +37,15 @@ What it does:
 1. Loads a JSONL manifest of lines.
 2. Encodes one fixed anchor once per run.
 3. For each line, builds continuation conversation:
-   1. `UserMessage(text=turkish_text + english_text, reference=[anchor_codes])`
+   1. `UserMessage(text=<join_style>(turkish_text, english_text), reference=[anchor_codes])`
    2. `AssistantMessage(audio_codes_list=[line.turkish_audio])`
 4. Generates audio with conservative sampling defaults.
 5. Saves one WAV per line plus `report.jsonl` with duration diagnostics.
+6. Saves `run_metadata.json` for auditability (sources, revisions, runtime versions, decoding setup).
+7. Auto-detects MOSS generation API:
+   1. Delay model (`audio_temperature` kwargs path), or
+   2. Local-transformer model (`generation_config.layers` path),
+   so decoding controls are applied deterministically for either family.
 
 ## 4. Manifest Format (JSONL)
 
@@ -97,6 +104,10 @@ python3 scripts/dub_identity_anchor.py \
   --manifest /abs/path/character_lines.jsonl \
   --anchor-audio /abs/path/character_anchor.wav \
   --out-dir /abs/path/outputs/mut_c2_run1 \
+  --model-revision <pinned_model_revision_or_tag> \
+  --codec-revision <pinned_codec_revision_or_tag> \
+  --cpu-offload \
+  --text-join-style lang_tags \
   --audio-temperature 1.2 \
   --audio-top-p 0.7 \
   --audio-top-k 20 \
@@ -109,6 +120,7 @@ Expected outputs:
 
 1. `out_dir/<line_id>.wav` for each line.
 2. `out_dir/report.jsonl` containing `target_seconds`, `out_seconds`, and `duration_error_seconds`.
+3. `out_dir/run_metadata.json` with deterministic run metadata.
 
 ## 8. Evaluation Metrics
 
@@ -183,7 +195,9 @@ It runs `C0/C1/C2/C3`, supports multiple seeds, and writes:
 1. `results.jsonl` (all line-level outputs and metadata)
 2. `summary_by_run.csv` (condition+seed aggregates)
 3. `summary_by_condition.csv` (condition aggregates)
-4. `summary.md` (human-readable table)
+4. `summary_by_mode.csv` (generation vs continuation aggregates)
+5. `summary.md` (human-readable table)
+6. `run_metadata.json` (sources, revisions, backend, weights, runtime versions)
 
 Example:
 
@@ -192,13 +206,32 @@ python3 scripts/run_dubbing_ablation.py \
   --manifest /abs/path/character_lines.jsonl \
   --anchor-audio /abs/path/character_anchor.wav \
   --out-dir /abs/path/outputs/ablation_run_01 \
+  --model-revision <pinned_model_revision_or_tag> \
+  --codec-revision <pinned_codec_revision_or_tag> \
+  --cpu-offload \
   --conditions C0,C1,C2,C3 \
   --seeds 42,1337,2026 \
+  --timing-control-policy off \
+  --text-join-style lang_tags \
+  --identity-backend xvector \
   --candidate-count 3 \
+  --identity-weight 1.0 \
+  --duration-weight 0.35 \
+  --expressiveness-weight 0.0 \
   --audio-temperature 1.2 \
   --audio-top-p 0.7 \
   --audio-top-k 20 \
   --audio-repetition-penalty 1.0 \
-  --cap-ratio 1.35 \
-  --include-tokens-in-generation
+  --cap-ratio 1.35
 ```
+
+## 14. Deterministic Evaluation Protocol
+
+To make conclusions auditable and reproducible:
+
+1. Pin model/codec revisions (`--model-revision`, `--codec-revision`) and keep `run_metadata.json`.
+2. Keep timing policy explicit. For cross-mode fairness, prefer `--timing-control-policy off`.
+3. Keep TR/EN boundary explicit with a fixed join style (`--text-join-style`).
+4. Report identity mean and identity variance, not mean only.
+5. Report expressiveness metrics (`f0_similarity`, `energy_similarity`, `pause_f1`, `speech_rate_similarity`) alongside timing metrics.
+6. For constrained VRAM, use `--cpu-offload` and record it in `run_metadata.json`.
